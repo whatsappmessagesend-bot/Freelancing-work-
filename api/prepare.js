@@ -1,8 +1,6 @@
-function json(res, status, body) {
-  res
-    .status(status)
-    .setHeader("Content-Type", "application/json");
 
+function json(res, status, body) {
+  res.status(status).setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(body));
 }
 
@@ -19,9 +17,7 @@ async function supabaseRequest(path, options = {}) {
   const key = process.env.SUPABASE_SECRET_KEY;
 
   if (!url || !key) {
-    throw new Error(
-      "Supabase environment variables are missing"
-    );
+    throw new Error("Supabase environment variables are missing");
   }
 
   const response = await fetch(
@@ -38,7 +34,6 @@ async function supabaseRequest(path, options = {}) {
   );
 
   const text = await response.text();
-
   let data = null;
 
   try {
@@ -60,9 +55,7 @@ async function telegramRequest(method, body) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
 
   if (!token) {
-    throw new Error(
-      "TELEGRAM_BOT_TOKEN is missing in Vercel"
-    );
+    throw new Error("TELEGRAM_BOT_TOKEN is missing in Vercel");
   }
 
   const response = await fetch(
@@ -77,7 +70,6 @@ async function telegramRequest(method, body) {
   );
 
   const text = await response.text();
-
   let data = null;
 
   try {
@@ -98,25 +90,14 @@ async function telegramRequest(method, body) {
 }
 
 async function verifyTelegramAccess() {
-  const me = await telegramRequest(
-    "getMe",
-    {}
-  );
-
-  const chat = await telegramRequest(
-    "getChat",
-    {
-      chat_id: TELEGRAM_CHANNEL_ID
-    }
-  );
-
-  const member = await telegramRequest(
-    "getChatMember",
-    {
-      chat_id: TELEGRAM_CHANNEL_ID,
-      user_id: me.id
-    }
-  );
+  const me = await telegramRequest("getMe", {});
+  const chat = await telegramRequest("getChat", {
+    chat_id: TELEGRAM_CHANNEL_ID
+  });
+  const member = await telegramRequest("getChatMember", {
+    chat_id: TELEGRAM_CHANNEL_ID,
+    user_id: me.id
+  });
 
   if (
     member.status !== "administrator" &&
@@ -136,26 +117,20 @@ async function verifyTelegramAccess() {
     );
   }
 
-  console.log(
-    "Telegram verified:",
-    JSON.stringify({
-      bot_id: me.id,
-      bot_username: me.username || null,
-      chat_id: chat.id,
-      chat_title: chat.title || null,
-      chat_type: chat.type,
-      member_status: member.status,
-      can_invite_users:
-        member.can_invite_users === true
-    })
-  );
+  console.log("Telegram verified:", JSON.stringify({
+    bot_id: me.id,
+    bot_username: me.username || null,
+    chat_id: chat.id,
+    chat_title: chat.title || null,
+    chat_type: chat.type,
+    member_status: member.status,
+    can_invite_users: member.can_invite_users === true
+  }));
 
   return me;
 }
 
-async function createTrackingInviteLink(
-  trackingId
-) {
+async function createTrackingInviteLink(trackingId) {
   await verifyTelegramAccess();
 
   const safeId = String(trackingId)
@@ -163,44 +138,27 @@ async function createTrackingInviteLink(
     .slice(0, 24);
 
   const inviteName = `nbp_${safeId}`;
-
   const expireDate =
-    Math.floor(Date.now() / 1000) +
-    7 * 24 * 60 * 60;
+    Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
 
-  /*
-   * IMPORTANT:
-   * creates_join_request = true
-   *
-   * User will remain PENDING until
-   * a channel administrator approves them.
-   *
-   * member_limit is intentionally NOT used.
-   */
-  const invite =
-    await telegramRequest(
-      "createChatInviteLink",
-      {
-        chat_id: TELEGRAM_CHANNEL_ID,
-        name: inviteName,
-        expire_date: expireDate,
-        creates_join_request: true
-      }
-    );
+  const invite = await telegramRequest(
+    "createChatInviteLink",
+    {
+      chat_id: TELEGRAM_CHANNEL_ID,
+      name: inviteName,
+      expire_date: expireDate,
+      creates_join_request: true
+    }
+  );
 
   if (!invite?.invite_link) {
-    throw new Error(
-      "Telegram did not return an invite link"
-    );
+    throw new Error("Telegram did not return an invite link");
   }
 
   return invite;
 }
 
-export default async function handler(
-  req,
-  res
-) {
+export default async function handler(req, res) {
   if (req.method !== "POST") {
     return json(res, 405, {
       ok: false,
@@ -210,11 +168,7 @@ export default async function handler(
 
   try {
     const body = req.body || {};
-
-    const trackingId = clean(
-      body.tracking_id,
-      100
-    );
+    const trackingId = clean(body.tracking_id, 100);
 
     if (!trackingId) {
       return json(res, 400, {
@@ -223,101 +177,64 @@ export default async function handler(
       });
     }
 
-    /*
-     * Reuse an existing active invite
-     * for the same tracking ID.
-     */
-    const existingInvite =
-      await supabaseRequest(
-        `telegram_invites?select=tracking_id,invite_link,is_revoked&tracking_id=eq.${encodeURIComponent(
-          trackingId
-        )}&is_revoked=eq.false&limit=1`
-      );
+    const existingInvite = await supabaseRequest(
+      `telegram_invites?select=tracking_id,invite_link,is_revoked&tracking_id=eq.${encodeURIComponent(
+        trackingId
+      )}&is_revoked=eq.false&limit=1`
+    );
 
     if (
       existingInvite &&
       existingInvite.length > 0 &&
       existingInvite[0].invite_link
     ) {
+      const updates = {};
+
+      for (const field of ["fbp", "fbc", "fbclid"]) {
+        const value = clean(body[field], 500);
+        if (value) {
+          updates[field] = value;
+        }
+      }
+
+      if (Object.keys(updates).length) {
+        await supabaseRequest(
+          `landing_visits?tracking_id=eq.${encodeURIComponent(
+            trackingId
+          )}`,
+          {
+            method: "PATCH",
+            headers: {
+              Prefer: "return=minimal"
+            },
+            body: JSON.stringify(updates)
+          }
+        );
+      }
+
       return json(res, 200, {
         ok: true,
         tracking_id: trackingId,
-        telegram_invite:
-          existingInvite[0].invite_link,
+        telegram_invite: existingInvite[0].invite_link,
         reused: true
       });
     }
 
-    /*
-     * Save Meta / UTM attribution.
-     */
     const landingRow = {
       tracking_id: trackingId,
-
-      landing_page: clean(
-        body.landing_page,
-        2000
-      ),
-
-      referrer: clean(
-        body.referrer,
-        2000
-      ),
-
-      fbclid: clean(
-        body.fbclid,
-        500
-      ),
-
-      fbc: clean(
-        body.fbc,
-        500
-      ),
-
-      fbp: clean(
-        body.fbp,
-        500
-      ),
-
-      utm_source: clean(
-        body.utm_source,
-        300
-      ),
-
-      utm_medium: clean(
-        body.utm_medium,
-        300
-      ),
-
-      utm_campaign: clean(
-        body.utm_campaign,
-        1000
-      ),
-
-      utm_content: clean(
-        body.utm_content,
-        1000
-      ),
-
-      utm_term: clean(
-        body.utm_term,
-        1000
-      ),
-
-      campaign_id: clean(
-        body.campaign_id,
-        300
-      ),
-
-      adset_id: clean(
-        body.adset_id,
-        300
-      ),
-
-      ad_id: clean(
-        body.ad_id,
-        300
-      )
+      landing_page: clean(body.landing_page, 2000),
+      referrer: clean(body.referrer, 2000),
+      fbclid: clean(body.fbclid, 500),
+      fbc: clean(body.fbc, 500),
+      fbp: clean(body.fbp, 500),
+      utm_source: clean(body.utm_source, 300),
+      utm_medium: clean(body.utm_medium, 300),
+      utm_campaign: clean(body.utm_campaign, 1000),
+      utm_content: clean(body.utm_content, 1000),
+      utm_term: clean(body.utm_term, 1000),
+      campaign_id: clean(body.campaign_id, 300),
+      adset_id: clean(body.adset_id, 300),
+      ad_id: clean(body.ad_id, 300)
     };
 
     await supabaseRequest(
@@ -325,79 +242,43 @@ export default async function handler(
       {
         method: "POST",
         headers: {
-          Prefer:
-            "resolution=merge-duplicates,return=minimal"
+          Prefer: "resolution=merge-duplicates,return=minimal"
         },
-        body: JSON.stringify(
-          landingRow
-        )
+        body: JSON.stringify(landingRow)
       }
     );
 
-    /*
-     * Create unique Telegram join-request invite.
-     */
-    const invite =
-      await createTrackingInviteLink(
-        trackingId
-      );
+    const invite = await createTrackingInviteLink(trackingId);
 
-    /*
-     * Save invite attribution.
-     */
-    await supabaseRequest(
-      "telegram_invites",
-      {
-        method: "POST",
-        headers: {
-          Prefer: "return=minimal"
-        },
-        body: JSON.stringify({
-          tracking_id: trackingId,
-
-          invite_link:
-            invite.invite_link,
-
-          invite_name:
-            invite.name || null,
-
-          telegram_channel_id:
-            TELEGRAM_CHANNEL_ID,
-
-          is_revoked: false
-        })
-      }
-    );
+    await supabaseRequest("telegram_invites", {
+      method: "POST",
+      headers: {
+        Prefer: "return=minimal"
+      },
+      body: JSON.stringify({
+        tracking_id: trackingId,
+        invite_link: invite.invite_link,
+        invite_name: invite.name || null,
+        telegram_channel_id: TELEGRAM_CHANNEL_ID,
+        is_revoked: false
+      })
+    });
 
     return json(res, 200, {
       ok: true,
-
-      tracking_id:
-        trackingId,
-
-      telegram_invite:
-        invite.invite_link,
-
-      creates_join_request:
-        invite.creates_join_request === true,
-
+      tracking_id: trackingId,
+      telegram_invite: invite.invite_link,
+      creates_join_request: invite.creates_join_request === true,
       reused: false
     });
 
   } catch (error) {
-    console.error(
-      "Prepare error:",
-      error
-    );
+    console.error("Prepare error:", error);
 
     return json(res, 500, {
       ok: false,
-
-      error:
-        "prepare_failed",
-
-      detail:
-        error.message
+      error: "prepare_failed",
+      detail: error.message
     });
   }
-    }
+}
