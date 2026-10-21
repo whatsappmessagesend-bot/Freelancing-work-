@@ -1,20 +1,30 @@
+// api/telegram-webhook.js
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
 const TELEGRAM_CHANNEL_ID =
   process.env.TELEGRAM_CHANNEL_ID || "-1004379137599";
+
 const TELEGRAM_WEBHOOK_SECRET =
   process.env.TELEGRAM_WEBHOOK_SECRET || "";
 
 const SUPABASE_URL =
   process.env.SUPABASE_URL ||
   "https://mgcpqbqmrzegyufukckv.supabase.co";
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
+
+const SUPABASE_SECRET_KEY =
+  process.env.SUPABASE_SECRET_KEY;
 
 const META_PIXEL_ID =
-  process.env.META_PIXEL_ID || "1376853070922113";
-const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+  process.env.META_PIXEL_ID ||
+  "1376853070922113";
+
+const META_ACCESS_TOKEN =
+  process.env.META_ACCESS_TOKEN;
+
 const META_GRAPH_VERSION =
   process.env.META_GRAPH_VERSION || "v24.0";
+
 const META_EVENT_NAME =
   process.env.META_EVENT_NAME || "Subscribe";
 
@@ -22,23 +32,35 @@ const APP_URL =
   process.env.APP_URL ||
   "https://freelancing-work-ten.vercel.app";
 
+
+// =========================================================
+// RESPONSE
+// =========================================================
+
 function json(res, status, body) {
   res.status(status);
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(body));
 }
 
+
+// =========================================================
+// SUPABASE
+// =========================================================
+
 async function supabaseRequest(path, options = {}) {
   const response = await fetch(
     `${SUPABASE_URL}/rest/v1/${path}`,
     {
       method: options.method || "GET",
+
       headers: {
         apikey: SUPABASE_SECRET_KEY,
         Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
         "Content-Type": "application/json",
         ...(options.headers || {})
       },
+
       body:
         options.body !== undefined
           ? JSON.stringify(options.body)
@@ -47,6 +69,7 @@ async function supabaseRequest(path, options = {}) {
   );
 
   const text = await response.text();
+
   let data;
 
   try {
@@ -56,24 +79,35 @@ async function supabaseRequest(path, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(`Supabase ${response.status}: ${text}`);
+    throw new Error(
+      `Supabase ${response.status}: ${text}`
+    );
   }
 
   return data;
 }
 
+
+// =========================================================
+// TELEGRAM API
+// =========================================================
+
 async function telegramRequest(method, payload = {}) {
   if (!TELEGRAM_BOT_TOKEN) {
-    throw new Error("TELEGRAM_BOT_TOKEN is missing");
+    throw new Error(
+      "TELEGRAM_BOT_TOKEN is missing"
+    );
   }
 
   const response = await fetch(
     `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}`,
     {
       method: "POST",
+
       headers: {
         "Content-Type": "application/json"
       },
+
       body: JSON.stringify(payload)
     }
   );
@@ -89,6 +123,11 @@ async function telegramRequest(method, payload = {}) {
   return data;
 }
 
+
+// =========================================================
+// TELEGRAM MEMBER STATUS
+// =========================================================
+
 function isTelegramMember(status) {
   return (
     status === "member" ||
@@ -97,34 +136,59 @@ function isTelegramMember(status) {
   );
 }
 
+
+// =========================================================
+// AUTO APPROVE
+// =========================================================
+
 async function approveJoinRequest(request) {
-  const chatId = String(request?.chat?.id ?? "");
-  const userId = request?.from?.id;
+  const chatId =
+    String(request?.chat?.id ?? "");
+
+  const userId =
+    request?.from?.id;
 
   if (!chatId) {
-    throw new Error("Telegram chat ID missing");
+    throw new Error(
+      "Telegram chat ID missing"
+    );
   }
 
   if (!userId) {
-    throw new Error("Telegram user ID missing");
+    throw new Error(
+      "Telegram user ID missing"
+    );
   }
+
+  console.log(
+    `Checking Telegram membership for user ${userId}`
+  );
 
   let memberInfo;
 
   try {
-    memberInfo = await telegramRequest("getChatMember", {
-      chat_id: chatId,
-      user_id: userId
-    });
+    memberInfo =
+      await telegramRequest(
+        "getChatMember",
+        {
+          chat_id: chatId,
+          user_id: userId
+        }
+      );
   } catch (error) {
     console.log(
-      `Could not check membership: ${error.message}`
+      `Could not check existing membership for ${userId}: ${error.message}`
     );
   }
 
-  const currentStatus = memberInfo?.result?.status;
+  const currentStatus =
+    memberInfo?.result?.status;
 
   if (isTelegramMember(currentStatus)) {
+    console.log(
+      `User ${userId} is already a Telegram member`
+    );
+
     return {
       ok: true,
       already_member: true,
@@ -132,16 +196,38 @@ async function approveJoinRequest(request) {
     };
   }
 
+  console.log(
+    `Sending auto-approval for user ${userId}`
+  );
+
   try {
-    return await telegramRequest("approveChatJoinRequest", {
-      chat_id: chatId,
-      user_id: userId
-    });
+    const result =
+      await telegramRequest(
+        "approveChatJoinRequest",
+        {
+          chat_id: chatId,
+          user_id: userId
+        }
+      );
+
+    console.log(
+      `AUTO APPROVAL SUCCESS for user ${userId}`
+    );
+
+    return result;
+
   } catch (error) {
+
     if (
       String(error?.message || "")
-        .includes("USER_ALREADY_PARTICIPANT")
+        .includes(
+          "USER_ALREADY_PARTICIPANT"
+        )
     ) {
+      console.log(
+        `User ${userId} is already a Telegram participant`
+      );
+
       return {
         ok: true,
         already_member: true
@@ -152,39 +238,73 @@ async function approveJoinRequest(request) {
   }
 }
 
+
+// =========================================================
+// FIND TRACKED INVITE
+// =========================================================
+
 async function findTrackedInvite(inviteLink) {
-  if (!inviteLink) return null;
+  if (!inviteLink) {
+    return null;
+  }
 
-  const rows = await supabaseRequest(
-    `telegram_invites?invite_link=eq.${encodeURIComponent(
-      inviteLink
-    )}&is_revoked=eq.false&select=*`
-  );
+  const encoded =
+    encodeURIComponent(inviteLink);
+
+  const rows =
+    await supabaseRequest(
+      `telegram_invites?invite_link=eq.${encoded}&is_revoked=eq.false&select=*`
+    );
+
+  return Array.isArray(rows) && rows.length
+    ? rows[0]
+    : null;
+}
+
+
+// =========================================================
+// FIND EXISTING JOIN
+// =========================================================
+
+async function findExistingJoin(
+  telegramUserId,
+  channelId
+) {
+  const user =
+    encodeURIComponent(
+      String(telegramUserId)
+    );
+
+  const channel =
+    encodeURIComponent(
+      String(channelId)
+    );
+
+  const rows =
+    await supabaseRequest(
+      `telegram_joins?telegram_user_id=eq.${user}&telegram_channel_id=eq.${channel}&select=*&order=created_at.desc&limit=1`
+    );
 
   return Array.isArray(rows) && rows.length
     ? rows[0]
     : null;
 }
 
-async function findExistingJoin(telegramUserId, channelId) {
-  const user = encodeURIComponent(String(telegramUserId));
-  const channel = encodeURIComponent(String(channelId));
 
-  const rows = await supabaseRequest(
-    `telegram_joins?telegram_user_id=eq.${user}&telegram_channel_id=eq.${channel}&select=*&order=created_at.desc&limit=1`
-  );
-
-  return Array.isArray(rows) && rows.length
-    ? rows[0]
-    : null;
-}
+// =========================================================
+// SAVE JOIN REQUEST
+// =========================================================
 
 async function saveJoinRequest(request) {
   const inviteLink =
-    request?.invite_link?.invite_link || null;
+    request?.invite_link?.invite_link ||
+    null;
 
   if (!inviteLink) {
-    console.log("Join request has no invite link");
+    console.log(
+      "Join request has no invite link"
+    );
+
     return {
       tracked: false,
       join: null,
@@ -192,10 +312,16 @@ async function saveJoinRequest(request) {
     };
   }
 
-  const invite = await findTrackedInvite(inviteLink);
+  const invite =
+    await findTrackedInvite(
+      inviteLink
+    );
 
   if (!invite) {
-    console.log(`Untracked Telegram invite: ${inviteLink}`);
+    console.log(
+      `Untracked Telegram invite: ${inviteLink}`
+    );
+
     return {
       tracked: false,
       join: null,
@@ -203,22 +329,32 @@ async function saveJoinRequest(request) {
     };
   }
 
-  const telegramUser = request?.from;
+  const telegramUser =
+    request?.from;
 
   if (!telegramUser?.id) {
-    throw new Error("Telegram join request has no user");
+    throw new Error(
+      "Telegram join request has no user"
+    );
   }
 
-  const channelId = String(
-    request?.chat?.id || TELEGRAM_CHANNEL_ID
-  );
+  const channelId =
+    String(
+      request?.chat?.id ||
+      TELEGRAM_CHANNEL_ID
+    );
 
-  const existing = await findExistingJoin(
-    telegramUser.id,
-    channelId
-  );
+  const existing =
+    await findExistingJoin(
+      telegramUser.id,
+      channelId
+    );
 
   if (existing) {
+    console.log(
+      `Join request already tracked ${existing.tracking_id || "unknown"}`
+    );
+
     return {
       tracked: true,
       join: existing,
@@ -226,26 +362,49 @@ async function saveJoinRequest(request) {
     };
   }
 
-  const inserted = await supabaseRequest("telegram_joins", {
-    method: "POST",
-    headers: {
-      Prefer: "return=representation"
-    },
-    body: {
-      tracking_id: invite.tracking_id,
-      invite_link: inviteLink,
-      telegram_channel_id: channelId,
-      telegram_user_id: String(telegramUser.id),
-      telegram_username: telegramUser.username || null,
-      telegram_first_name: telegramUser.first_name || null,
-      telegram_last_name: telegramUser.last_name || null,
-      meta_event_sent: false
-    }
-  });
+  const inserted =
+    await supabaseRequest(
+      "telegram_joins",
+      {
+        method: "POST",
 
-  const join = Array.isArray(inserted)
-    ? inserted[0]
-    : inserted;
+        headers: {
+          Prefer:
+            "return=representation"
+        },
+
+        body: {
+          tracking_id:
+            invite.tracking_id,
+
+          invite_link:
+            inviteLink,
+
+          telegram_channel_id:
+            channelId,
+
+          telegram_user_id:
+            String(telegramUser.id),
+
+          telegram_username:
+            telegramUser.username || null,
+
+          telegram_first_name:
+            telegramUser.first_name || null,
+
+          telegram_last_name:
+            telegramUser.last_name || null,
+
+          meta_event_sent:
+            false
+        }
+      }
+    );
+
+  const join =
+    Array.isArray(inserted)
+      ? inserted[0]
+      : inserted;
 
   console.log(
     `Join request tracked ${invite.tracking_id}`
@@ -258,18 +417,39 @@ async function saveJoinRequest(request) {
   };
 }
 
-async function findPendingJoin(telegramUserId, channelId) {
-  const user = encodeURIComponent(String(telegramUserId));
-  const channel = encodeURIComponent(String(channelId));
 
-  const rows = await supabaseRequest(
-    `telegram_joins?telegram_user_id=eq.${user}&telegram_channel_id=eq.${channel}&meta_event_sent=eq.false&select=*&order=created_at.desc&limit=1`
-  );
+// =========================================================
+// FIND PENDING JOIN
+// =========================================================
+
+async function findPendingJoin(
+  telegramUserId,
+  channelId
+) {
+  const user =
+    encodeURIComponent(
+      String(telegramUserId)
+    );
+
+  const channel =
+    encodeURIComponent(
+      String(channelId)
+    );
+
+  const rows =
+    await supabaseRequest(
+      `telegram_joins?telegram_user_id=eq.${user}&telegram_channel_id=eq.${channel}&meta_event_sent=eq.false&select=*&order=created_at.desc&limit=1`
+    );
 
   return Array.isArray(rows) && rows.length
     ? rows[0]
     : null;
 }
+
+
+// =========================================================
+// ACTUAL MEMBER CHECK
+// =========================================================
 
 function isMemberStatus(status) {
   return (
@@ -278,6 +458,7 @@ function isMemberStatus(status) {
     status === "creator"
   );
 }
+
 
 function isNewJoin(chatMember) {
   const oldStatus =
@@ -292,19 +473,37 @@ function isNewJoin(chatMember) {
   );
 }
 
-async function getLandingVisit(trackingId) {
-  if (!trackingId) return null;
 
-  const rows = await supabaseRequest(
-    `landing_visits?tracking_id=eq.${encodeURIComponent(
+// =========================================================
+// LANDING VISIT
+// =========================================================
+
+async function getLandingVisit(
+  trackingId
+) {
+  if (!trackingId) {
+    return null;
+  }
+
+  const encoded =
+    encodeURIComponent(
       trackingId
-    )}&select=*&limit=1`
-  );
+    );
+
+  const rows =
+    await supabaseRequest(
+      `landing_visits?tracking_id=eq.${encoded}&select=*&limit=1`
+    );
 
   return Array.isArray(rows) && rows.length
     ? rows[0]
     : null;
 }
+
+
+// =========================================================
+// META CAPI
+// =========================================================
 
 async function sendMetaEvent({
   trackingId,
@@ -312,78 +511,100 @@ async function sendMetaEvent({
   eventId
 }) {
   if (!META_PIXEL_ID) {
-    throw new Error("META_PIXEL_ID is missing");
+    throw new Error(
+      "META_PIXEL_ID is missing"
+    );
   }
 
   if (!META_ACCESS_TOKEN) {
-    throw new Error("META_ACCESS_TOKEN is missing");
+    throw new Error(
+      "META_ACCESS_TOKEN is missing"
+    );
   }
 
   const event = {
-    event_name: META_EVENT_NAME,
-    event_time: Math.floor(Date.now() / 1000),
-    event_id: eventId,
-    action_source: "website",
+    event_name:
+      META_EVENT_NAME,
+
+    event_time:
+      Math.floor(
+        Date.now() / 1000
+      ),
+
+    event_id:
+      eventId,
+
+    action_source:
+      "website",
+
     event_source_url:
-      landingVisit?.landing_page || APP_URL,
+      landingVisit?.landing_page ||
+      APP_URL,
+
     user_data: {},
+
     custom_data: {
-      source: "telegram"
+      source:
+        "telegram"
     }
   };
 
   if (landingVisit?.fbc) {
-    event.user_data.fbc = landingVisit.fbc;
+    event.user_data.fbc =
+      landingVisit.fbc;
   }
 
   if (landingVisit?.fbp) {
-    event.user_data.fbp = landingVisit.fbp;
+    event.user_data.fbp =
+      landingVisit.fbp;
   }
 
+  // Do not send a Lead event without usable matching data.
   if (!event.user_data.fbc && !event.user_data.fbp) {
-    console.warn(
-      `No fbc/fbp for tracked join ${trackingId || "unknown"}`
+    throw new Error(
+      "Meta Lead not sent: landing visit has no fbc or fbp matching data"
     );
   }
 
   const endpoint =
-    `https://graph.facebook.com/${META_GRAPH_VERSION}/${META_PIXEL_ID}/events?access_token=${encodeURIComponent(
-      META_ACCESS_TOKEN
-    )}`;
+    `https://graph.facebook.com/${META_GRAPH_VERSION}/${META_PIXEL_ID}/events?access_token=${encodeURIComponent(META_ACCESS_TOKEN)}`;
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      data: [event]
-    })
-  });
+  const response =
+    await fetch(
+      endpoint,
+      {
+        method: "POST",
 
-  const responseText = await response.text();
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            data: [event]
+          })
+      }
+    );
+
+  const responseText =
+    await response.text();
+
   let responseData;
 
   try {
-    responseData = responseText
-      ? JSON.parse(responseText)
-      : null;
+    responseData =
+      responseText
+        ? JSON.parse(responseText)
+        : null;
   } catch {
-    responseData = responseText;
+    responseData =
+      responseText;
   }
 
   if (!response.ok) {
     throw new Error(
       `Meta CAPI ${response.status}: ${responseText}`
-    );
-  }
-
-  if (
-    typeof responseData?.events_received === "number" &&
-    responseData.events_received < 1
-  ) {
-    throw new Error(
-      `Meta CAPI accepted zero events: ${responseText}`
     );
   }
 
@@ -400,6 +621,11 @@ async function sendMetaEvent({
   return responseData;
 }
 
+
+// =========================================================
+// SAVE META EVENT
+// =========================================================
+
 async function saveMetaEvent({
   trackingId,
   telegramJoinId,
@@ -412,57 +638,111 @@ async function saveMetaEvent({
     "meta_events?on_conflict=event_id",
     {
       method: "POST",
+
       headers: {
-        Prefer: "resolution=merge-duplicates,return=representation"
+        Prefer:
+          "resolution=merge-duplicates,return=representation"
       },
+
       body: {
-        tracking_id: trackingId || null,
-        telegram_join_id: telegramJoinId || null,
-        event_name: META_EVENT_NAME,
-        event_id: eventId,
-        event_time: new Date().toISOString(),
-        fbclid: landingVisit?.fbclid || null,
-        fbc: landingVisit?.fbc || null,
-        fbp: landingVisit?.fbp || null,
+        tracking_id:
+          trackingId || null,
+
+        telegram_join_id:
+          telegramJoinId || null,
+
+        event_name:
+          META_EVENT_NAME,
+
+        event_id:
+          eventId,
+
+        event_time:
+          new Date().toISOString(),
+
+        fbclid:
+          landingVisit?.fbclid || null,
+
+        fbc:
+          landingVisit?.fbc || null,
+
+        fbp:
+          landingVisit?.fbp || null,
+
         event_source_url:
-          landingVisit?.landing_page || APP_URL,
-        status: status || "pending",
-        response_body: responseBody
-          ? JSON.stringify(responseBody)
-          : null
+          landingVisit?.landing_page ||
+          APP_URL,
+
+        status:
+          status || "pending",
+
+        response_body:
+          responseBody
+            ? JSON.stringify(
+                responseBody
+              )
+            : null
       }
     }
   );
 }
 
-async function markJoinMetaSent(joinId, eventId) {
-  if (!joinId) return;
+
+// =========================================================
+// MARK META EVENT SENT
+// =========================================================
+
+async function markJoinMetaSent(
+  joinId,
+  eventId
+) {
+  if (!joinId) {
+    return;
+  }
+
+  const encodedId =
+    encodeURIComponent(
+      String(joinId)
+    );
 
   await supabaseRequest(
-    `telegram_joins?id=eq.${encodeURIComponent(
-      String(joinId)
-    )}`,
+    `telegram_joins?id=eq.${encodedId}`,
     {
       method: "PATCH",
+
       headers: {
-        Prefer: "return=minimal"
+        Prefer:
+          "return=minimal"
       },
+
       body: {
-        meta_event_sent: true,
-        meta_event_id: eventId
+        meta_event_sent:
+          true,
+
+        meta_event_id:
+          eventId
       }
     }
   );
 }
 
-async function processActualJoin(chatMember) {
+
+// =========================================================
+// PROCESS ACTUAL JOIN
+// =========================================================
+
+async function processActualJoin(
+  chatMember
+) {
   if (!isNewJoin(chatMember)) {
     console.log(
       "chat_member update ignored: not a new join"
     );
+
     return {
       processed: false,
-      reason: "not_new_join"
+      reason:
+        "not_new_join"
     };
   }
 
@@ -475,54 +755,78 @@ async function processActualJoin(chatMember) {
     );
   }
 
-  const channelId = String(
-    chatMember?.chat?.id || TELEGRAM_CHANNEL_ID
-  );
+  const channelId =
+    String(
+      chatMember?.chat?.id ||
+      TELEGRAM_CHANNEL_ID
+    );
 
-  const pendingJoin = await findPendingJoin(
-    telegramUser.id,
-    channelId
-  );
+  const pendingJoin =
+    await findPendingJoin(
+      telegramUser.id,
+      channelId
+    );
 
   if (!pendingJoin) {
     console.log(
-      `No pending tracked join for ${telegramUser.id}`
+      `No pending tracked join found for Telegram user ${telegramUser.id}`
     );
+
     return {
       processed: false,
-      reason: "no_pending_join"
+      reason:
+        "no_pending_join"
     };
   }
 
   if (pendingJoin.meta_event_sent) {
+    console.log(
+      `Meta event already sent for ${pendingJoin.tracking_id}`
+    );
+
     return {
       processed: false,
-      reason: "already_sent"
+      reason:
+        "already_sent"
     };
   }
 
-  const landingVisit = await getLandingVisit(
-    pendingJoin.tracking_id
-  );
+  const landingVisit =
+    await getLandingVisit(
+      pendingJoin.tracking_id
+    );
 
   const eventId =
     pendingJoin.meta_event_id ||
     `telegram_join_${pendingJoin.id}`;
 
   try {
-    const metaResponse = await sendMetaEvent({
-      trackingId: pendingJoin.tracking_id,
-      landingVisit,
-      eventId
-    });
+    const metaResponse =
+      await sendMetaEvent({
+        trackingId:
+          pendingJoin.tracking_id,
+
+        landingVisit,
+
+        eventId
+      });
 
     await saveMetaEvent({
-      trackingId: pendingJoin.tracking_id,
-      telegramJoinId: pendingJoin.id,
+      trackingId:
+        pendingJoin.tracking_id,
+
+      telegramJoinId:
+        pendingJoin.id,
+
       eventId,
+
       landingVisit,
-      status: "sent",
-      responseBody: metaResponse
+
+      status:
+        "sent",
+
+      responseBody:
+        metaResponse
     });
 
     await markJoinMetaSent(
@@ -531,16 +835,21 @@ async function processActualJoin(chatMember) {
     );
 
     console.log(
-      `Actual Telegram join processed: ${pendingJoin.tracking_id}`
+      `Actual Telegram join processed successfully: ${pendingJoin.tracking_id}`
     );
 
     return {
       processed: true,
-      tracking_id: pendingJoin.tracking_id,
-      event_id: eventId
+
+      tracking_id:
+        pendingJoin.tracking_id,
+
+      event_id:
+        eventId
     };
 
   } catch (error) {
+
     console.error(
       `Meta event failed for ${pendingJoin.tracking_id}:`,
       error
@@ -548,13 +857,23 @@ async function processActualJoin(chatMember) {
 
     try {
       await saveMetaEvent({
-        trackingId: pendingJoin.tracking_id,
-        telegramJoinId: pendingJoin.id,
+        trackingId:
+          pendingJoin.tracking_id,
+
+        telegramJoinId:
+          pendingJoin.id,
+
         eventId,
+
         landingVisit,
-        status: "failed",
+
+        status:
+          "failed",
+
         responseBody: {
-          error: error?.message || String(error)
+          error:
+            error?.message ||
+            String(error)
         }
       });
     } catch (logError) {
@@ -564,6 +883,7 @@ async function processActualJoin(chatMember) {
       );
     }
 
+    // Meta failure is logged but must not make Telegram retry the join.
     return {
       processed: false,
       reason: "meta_event_failed",
@@ -573,48 +893,97 @@ async function processActualJoin(chatMember) {
   }
 }
 
-export default async function handler(req, res) {
+
+// =========================================================
+// MAIN WEBHOOK
+// =========================================================
+
+export default async function handler(
+  req,
+  res
+) {
   try {
+
     if (req.method !== "POST") {
-      return json(res, 405, {
-        ok: false,
-        error: "Method Not Allowed"
-      });
+      return json(
+        res,
+        405,
+        {
+          ok: false,
+          error:
+            "Method Not Allowed"
+        }
+      );
     }
+
+
+    // -----------------------------------------------------
+    // WEBHOOK SECRET
+    // -----------------------------------------------------
 
     if (TELEGRAM_WEBHOOK_SECRET) {
       const receivedSecret =
-        req.headers["x-telegram-bot-api-secret-token"];
+        req.headers[
+          "x-telegram-bot-api-secret-token"
+        ];
 
-      if (receivedSecret !== TELEGRAM_WEBHOOK_SECRET) {
-        console.warn("Invalid Telegram webhook secret");
+      if (
+        receivedSecret !==
+        TELEGRAM_WEBHOOK_SECRET
+      ) {
+        console.warn(
+          "Invalid Telegram webhook secret"
+        );
 
-        return json(res, 401, {
-          ok: false,
-          error: "Unauthorized"
-        });
+        return json(
+          res,
+          401,
+          {
+            ok: false,
+            error:
+              "Unauthorized"
+          }
+        );
       }
     }
 
-    const update = req.body || {};
+
+    const update =
+      req.body || {};
+
+
+    // =====================================================
+    // TELEGRAM JOIN REQUEST
+    // =====================================================
 
     if (update.chat_join_request) {
-      const request = update.chat_join_request;
+
+      const request =
+        update.chat_join_request;
 
       console.log(
-        `Received Telegram join request from ${
-          request?.from?.id || "unknown"
-        }`
+        `Received Telegram join request from ${request?.from?.id || "unknown"}`
       );
 
-      const result = await saveJoinRequest(request);
-      let approved = false;
+      const result =
+        await saveJoinRequest(
+          request
+        );
 
       if (result.tracked) {
+
         try {
-          await approveJoinRequest(request);
-          approved = true;
+
+          await approveJoinRequest(
+            request
+          );
+
+          console.log(
+            `Auto approval completed for ${result.join?.tracking_id || "unknown"}`
+          );
+
         } catch (approvalError) {
+
           console.error(
             "Telegram auto approval failed:",
             approvalError
@@ -622,42 +991,91 @@ export default async function handler(req, res) {
         }
       }
 
-      return json(res, 200, {
-        ok: true,
-        type: "chat_join_request",
-        tracked: result.tracked,
-        tracking_id:
-          result.join?.tracking_id ||
-          result.invite?.tracking_id ||
-          null,
-        approved
-      });
+      return json(
+        res,
+        200,
+        {
+          ok: true,
+
+          type:
+            "chat_join_request",
+
+          tracked:
+            result.tracked,
+
+          tracking_id:
+            result.join?.tracking_id ||
+            result.invite?.tracking_id ||
+            null,
+
+          approved:
+            result.tracked
+              ? true
+              : false
+        }
+      );
     }
+
+
+    // =====================================================
+    // TELEGRAM CHAT MEMBER
+    // =====================================================
 
     if (update.chat_member) {
-      const result = await processActualJoin(
-        update.chat_member
-      );
 
-      return json(res, 200, {
-        ok: true,
-        type: "chat_member",
-        ...result
-      });
+      const result =
+        await processActualJoin(
+          update.chat_member
+        );
+
+      return json(
+        res,
+        200,
+        {
+          ok: true,
+
+          type:
+            "chat_member",
+
+          ...result
+        }
+      );
     }
 
-    return json(res, 200, {
-      ok: true,
-      ignored: true
-    });
+
+    // =====================================================
+    // OTHER TELEGRAM UPDATE
+    // =====================================================
+
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        ignored: true
+      }
+    );
 
   } catch (error) {
-    console.error("Telegram webhook error:", error);
 
-    return json(res, 500, {
-      ok: false,
-      error: "webhook_failed",
-      detail: error?.message || String(error)
-    });
+    console.error(
+      "Telegram webhook error:",
+      error
+    );
+
+    return json(
+      res,
+      500,
+      {
+        ok: false,
+
+        error:
+          "webhook_failed",
+
+        detail:
+          error?.message ||
+          String(error)
+      }
+    );
   }
     }
